@@ -1,9 +1,9 @@
-# MCV 2020 - M5 VisualRecognition - Group 6
+# MCV 2020 - M5 Visual Recognition - Group 6
 
-# Project: Object Detection and Segmentation
+## Project: Object Detection and Segmentation
 
 ## Group Members:
-- Dhananjay Nahata: @gmail.com
+- Dhananjay Nahata: nahatadhananjay33@gmail.com
 - Siddhant Bhambri: siddhantbhambri@gmail.com
 - Yu Pang: yupang2020@gmail.com
 - Khanh Nguyen: khanhnguyen21006@gmail.com
