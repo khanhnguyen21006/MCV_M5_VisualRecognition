@@ -25,6 +25,6 @@ We organize the project according to the works of each week. The source code is 
 - Run the inference_evaluate.py to obtain the results (AP metric, resulting images) for task b - c, the configuration has to be specified by modifying the script.
 - For the training task, go the train_evaluate.py, play with some hyper-parameters (learning rate, batch size, number of ROIs etc.) and run.
 - The train-validation loss curve can be plotted by running plot.py, pointing to the folder containing metrics.json. An alternative way to visualize the training process is to use tensorboard
-tensorboard --logdir /path/to/metrics.json.
+run: tensorboard --logdir /path/to/metrics.json.
 - The presentation for the work done this week can be found [here](https://docs.google.com/presentation/d/1wvgrYZm9FmR1pt6ufvdRt9kGv2YG0dZ4DiQmTdigVZ4/edit?usp=sharing).
 - Overleaf report with Experiment section updated [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).
