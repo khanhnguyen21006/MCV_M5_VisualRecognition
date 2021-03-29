@@ -27,3 +27,5 @@ We organize the project according to the works of each week. The source code is 
 - The train-validation loss curve can be plotted by running plot.py, pointing to the folder containing metrics.json. An alternative way to visualize the training process is to use tensorboard. Run: tensorboard --logdir /path/to/metrics.json.
 - The presentation for the work done this week can be found [here](https://docs.google.com/presentation/d/1wvgrYZm9FmR1pt6ufvdRt9kGv2YG0dZ4DiQmTdigVZ4/edit?usp=sharing).
 - Overleaf report with Experiment section updated [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).
+
+### Week 4
