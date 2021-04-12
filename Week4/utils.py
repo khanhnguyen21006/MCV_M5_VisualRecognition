@@ -2,22 +2,20 @@ import os
 import cv2
 import json
 import torch
-import time
-import datetime
 import numpy as np
-import logging
-from glob import glob
+import copy
+import random
+import pickle
 import matplotlib.pyplot as plt
 
 from detectron2.structures import BoxMode
 from detectron2.engine.hooks import HookBase
-from detectron2.utils.logger import log_every_n_seconds
-import detectron2.utils.comm as comm
-from detectron2.evaluation import COCOEvaluator
 from detectron2.engine import DefaultTrainer
-from detectron2.data import DatasetMapper, build_detection_test_loader
-
+import detectron2.utils.comm as comm
+from detectron2.data import build_detection_train_loader, DatasetMapper
+from detectron2.data import transforms as T
 from pycocotools import coco
+
 
 KITTIMOTS_IMAGE_DIR = '/home/mcv/datasets/KITTI-MOTS/training/image_02'
 KITTIMOTS_LABEL_DIR = '/home/mcv/datasets/KITTI-MOTS/instances_txt'
@@ -26,181 +24,177 @@ MOTS_IMAGE_DIR = '/home/mcv/datasets/MOTSChallenge/train/images'
 MOTS_LABEL_DIR = '/home/mcv/datasets/MOTSChallenge/train/instances_txt'
 MOTS_MASK_DIR = '/home/mcv/datasets/MOTSChallenge/train/instances'
 
+# KITTIMOTS_IMAGE_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/data_tracking_image_2/training/image_02'
+# KITTIMOTS_LABEL_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/data_tracking_image_2/training/instances_txt'
+# KITTIMOTS_MASK_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/data_tracking_image_2/training/instances'
+# MOTS_IMAGE_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/MOTSChallenge/train/images'
+# MOTS_LABEL_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/MOTSChallenge/train/instances_txt'
+# MOTS_MASK_DIR = '/Users/eternalenvy/Desktop/projects/M5VR/week3/MOTSChallenge/train/instances'
+
 KITTIMOTS_CATEGORIES = {
-    'Pedestrian': 2,
-    'Other': 0,  # avoid NANs when computing APs, dont know why
-    'Car': 1
+    'Car': 1,
+    'Pedestrian': 2
 }
+
 COCO_CATEGORIES = {
     2: 0,
     1: 2
 }
 
-MOTS_train_seqs = ['0005', '0009', '0011']
-MOTS_val_seqs = ['0002']
+MOTS_train_seqs = ['0002', '0005', '0009', '0011']
 KITTIMOTS_train_seqs = ['0000', '0001', '0003', '0004', '0005', '0009', '0011', '0012', '0015', '0017', '0019', '0020']
 KITTIMOTS_val_seqs = ['0002', '0006', '0007', '0008', '0010', '0013', '0014', '0016', '0018']
 
 
-class LossEvalHook(HookBase):
-    def __init__(self, eval_period, model, data_loader):
-        self._model = model
-        self._period = eval_period
-        self._data_loader = data_loader
-
-    def _do_loss_eval(self):
-        # Copying inference_on_dataset from evaluator.py
-        total = len(self._data_loader)
-        num_warmup = min(5, total - 1)
-
-        start_time = time.perf_counter()
-        total_compute_time = 0
-        losses = []
-        for idx, inputs in enumerate(self._data_loader):
-            if idx == num_warmup:
-                start_time = time.perf_counter()
-                total_compute_time = 0
-            start_compute_time = time.perf_counter()
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            total_compute_time += time.perf_counter() - start_compute_time
-            iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
-            seconds_per_img = total_compute_time / iters_after_start
-            if idx >= num_warmup * 2 or seconds_per_img > 5:
-                total_seconds_per_img = (time.perf_counter() - start_time) / iters_after_start
-                eta = datetime.timedelta(seconds=int(total_seconds_per_img * (total - idx - 1)))
-                log_every_n_seconds(
-                    logging.INFO,
-                    "Loss on Validation  done {}/{}. {:.4f} s / img. ETA={}".format(
-                        idx + 1, total, seconds_per_img, str(eta)
-                    ),
-                    n=5,
-                )
-            loss_batch = self._get_loss(inputs)
-            losses.append(loss_batch)
-        mean_loss = np.mean(losses)
-        self.trainer.storage.put_scalar('validation_loss', mean_loss)
-        comm.synchronize()
-
-        return losses
-
-    def _get_loss(self, data):
-        # How loss is calculated on train_loop
-        metrics_dict = self._model(data)
-        metrics_dict = {
-            k: v.detach().cpu().item() if isinstance(v, torch.Tensor) else float(v)
-            for k, v in metrics_dict.items()
-        }
-        total_losses_reduced = sum(loss for loss in metrics_dict.values())
-        return total_losses_reduced
-
-    def after_step(self):
-        next_iter = self.trainer.iter + 1
-        is_final = next_iter == self.trainer.max_iter
-        if is_final or (self._period > 0 and next_iter % self._period == 0):
-            self._do_loss_eval()
-        self.trainer.storage.put_scalars(timetest=12)
-
-
-class MyTrainer(DefaultTrainer):
-    def __init__(self, config):
-        self.config = config
-        super().__init__(config)
-    
-    @classmethod
-    def build_evaluator(cls, config, dataset_name, output_folder=None):
-        if output_folder is None:
-            output_folder = os.path.join(config.OUTPUT_DIR, "inference")
-        return COCOEvaluator(dataset_name, config, True, output_folder)
-
-    def build_hooks(self):
-        hooks = super().build_hooks()
-        hooks.insert(-1, LossEvalHook(
-            self.config.TEST.EVAL_PERIOD,
-            self.model,
-            build_detection_test_loader(
-                self.config,
-                self.config.DATASETS.TEST[0],
-                DatasetMapper(self.cfg, True)
-            )
-        ))
-        return hooks
-
-
-def add_records(image_path, mask_path, label_path, sequences, fm):
-    records = []
-    for seq in sequences:
-        seq_image_paths = sorted(glob(image_path + os.sep + seq + os.sep + fm))
-        seq_mask_paths = sorted(glob(mask_path + os.sep + seq + os.sep + fm))
-        seq_label_path = label_path + os.sep + seq + '.txt'
-
-        num_frame = len(seq_image_paths)
-
-        with open(seq_label_path, 'r') as f:
-            lines = f.readlines()
-            lines = [l.split(' ') for l in lines]
-
-        for fidx in range(num_frame):
-
-            fobjs = [li for li in lines if int(li[0]) == fidx]
-            if fobjs:
-                record = {}
-
-                filename = seq_image_paths[fidx]
-                height, width = int(fobjs[0][3]), int(fobjs[0][4])
-
-                record['file_name'] = filename
-                record['image_id'] = (int(seq) * 1e3) + fidx
-                record['height'] = height
-                record['width'] = width
-
-                annos = []
-                for fobj in fobjs:
-                    category = int(fobj[2])
-                    if category not in KITTIMOTS_CATEGORIES.values():
-                        continue
-
-                    rle = {
-                        'counts': fobj[-1].strip(),
-                        'size': [height, width]
-                    }
-                    bbox = coco.maskUtils.toBbox(rle).tolist()
-                    bbox[2] += bbox[0]
-                    bbox[3] += bbox[1]
-                    bbox = [int(item) for item in bbox]
-
-                    mask = coco.maskUtils.decode(rle)
-                    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-                    seg = [[int(i) for i in c.flatten()] for c in contours]
-                    seg = [s for s in seg if len(s) >= 6]
-                    if not seg:
-                        continue
-
-                    anno = {
-                        'category_id': category - 1,  # COCO_CATEGORIES[category],
-                        'bbox': bbox,
-                        'bbox_mode': BoxMode.XYXY_ABS,
-                        'segmentation': seg
-                    }
-                    annos.append(anno)
-
-                record["annotations"] = annos
-                records.append(record)
-
-    return records
-
-
-def get_dataset_dicts(phase='train', include_mots=False):
+def get_dataset_dicts(dataset, inference=False):
     dataset_dicts = []
-    if include_mots:
-        mots_sequences = MOTS_train_seqs if phase == 'train' else MOTS_val_seqs
-        print(f'MOTS {phase} seq: {mots_sequences}')
-        dataset_dicts += add_records(MOTS_IMAGE_DIR, MOTS_MASK_DIR, MOTS_LABEL_DIR, mots_sequences, '*.jpg')
-    kittimots_sequences = KITTIMOTS_train_seqs if phase == 'train' else KITTIMOTS_val_seqs
-    print(f'KITTIMOTS {phase} seq: {kittimots_sequences}')
-    dataset_dicts += add_records(KITTIMOTS_IMAGE_DIR, KITTIMOTS_MASK_DIR, KITTIMOTS_LABEL_DIR, kittimots_sequences, '*.png')
+    for idx, data_frame in enumerate(dataset):
+        record = {}
 
+        seq = data_frame[0][1]
+        frame_idx = data_frame[0][2]
+        if data_frame[0][0] == 'KITTI-MOTS':
+            image_path = KITTIMOTS_IMAGE_DIR
+            fm = '.png'
+        else:
+            image_path = MOTS_IMAGE_DIR
+            fm = '.jpg'
+        filename = image_path + os.sep + seq + os.sep + frame_idx.zfill(6) + fm
+
+        record['file_name'] = filename
+        record['image_id'] = idx
+        record['height'] = int(data_frame[0][5])
+        record['width'] = int(data_frame[0][6])
+
+        fobjs = []
+        for fobj in data_frame:
+            rle = {
+                'size': [int(fobj[5]), int(fobj[6])],
+                'counts': fobj[-1].strip().encode(encoding='UTF-8')
+            }
+
+            bbox = coco.maskUtils.toBbox(rle).tolist()
+            bbox[2] += bbox[0]
+            bbox[3] += bbox[1]
+            
+            # convert rle to poly
+            mask = coco.maskUtils.decode(rle)
+
+            contours, hierarchy = cv2.findContours(mask.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            segmentation = []
+
+            for contour in contours:
+                contour = contour.flatten().tolist()
+                if len(contour) > 4:
+                    segmentation.append(contour)
+            if len(segmentation) == 0:
+                continue
+
+            category = int(fobj[4])
+            if category not in KITTIMOTS_CATEGORIES.values():
+                continue
+            if inference:
+                category_id = COCO_CATEGORIES[category]
+            else:
+                category_id = category - 1
+
+            obj = {
+                'category_id': category_id,
+                'bbox': bbox,
+                'bbox_mode': BoxMode.XYXY_ABS,
+                'segmentation': segmentation,
+                'iscrowd': 0
+            }
+            fobjs.append(obj)
+        record['annotations'] = fobjs
+        dataset_dicts.append(record)
     return dataset_dicts
+
+
+def read_annos_from_path(ds_name, label_path, seq_name):
+    """
+    Read annotation within one sequence
+    :param ds_name:
+    :param label_path:
+    :param seq_name:
+    :return:
+    Annotations as a list of list, each element list contains annotations of one particular frame in this sequence
+    """
+
+    seq = seq_name[:4]
+    anno_path = label_path + os.sep + seq_name + '.txt'
+
+    seq_annos = []
+    frame_annos = []
+
+    curr_frame = 1 if ds_name == 'MOTS' else 0
+    for line in open(anno_path):  # loop over lines of seq.txt
+        fobj_line = line.split()
+        frame_idx = int(fobj_line[0])
+
+        frame_obj = [ds_name] + [seq] + fobj_line  # each line as an object
+
+        # check if the loop jumped to another frame or not
+        if frame_idx == curr_frame:
+            frame_annos.append(frame_obj)
+        else:
+            seq_annos.append(frame_annos)
+
+            frame_annos = [frame_obj]
+
+        curr_frame = frame_idx
+
+    # append objects of the last frame
+    if len(frame_annos) > 0:
+        seq_annos.append(frame_annos)
+
+    return seq_annos
+
+
+def read_data(include_mots=False):
+    if os.path.exists(f'training_validation_mots_{include_mots}.pkl'):
+        print(f'Loading already indexed training data, include_mots = {include_mots}')
+        with open(f'training_validation_mots_{include_mots}.pkl', 'rb') as p:
+            training, validation = pickle.load(p)
+            p.close()
+    else:
+        training = []
+        validation = []
+        if include_mots:
+            print(f'MOTS sequences: {MOTS_train_seqs}')
+            for idx, seq_name in enumerate(sorted(MOTS_train_seqs)):
+                annos = read_annos_from_path('MOTS', MOTS_LABEL_DIR, seq_name)
+                training.extend(annos)
+        print(f'KITTIMOTS train sequences: {KITTIMOTS_train_seqs}')
+        for idx, seq_name in enumerate(sorted(KITTIMOTS_train_seqs)):
+            annos = read_annos_from_path('KITTI-MOTS', KITTIMOTS_LABEL_DIR, seq_name)
+            training.extend(annos)
+        print(f'KITTIMOTS val sequences: {KITTIMOTS_val_seqs}')
+        for idx, seq_name in enumerate(sorted(KITTIMOTS_val_seqs)):
+            annos = read_annos_from_path('KITTI-MOTS', KITTIMOTS_LABEL_DIR, seq_name)
+            validation.extend(annos)
+
+        with open(f'training_validation_mots_{include_mots}.pkl', 'wb') as f:
+            pickle.dump([training, validation], f)
+            f.close()
+
+    return training, validation
+
+
+def get_test_sample(validation):
+    val = get_dataset_dicts(validation)
+
+    if os.path.exists(f'test_samples.pkl'):
+        with open('test_samples.pkl', 'rb') as p:
+            test_samples = pickle.load(p)
+            p.close()
+    else:
+        test_samples = random.sample(val, 20)
+        with open('test_samples.pkl', 'wb') as f:
+            pickle.dump(test_samples, f)
+            f.close()
+
+    return test_samples
 
 
 def load_json_arr(json_path):
@@ -228,3 +222,47 @@ def plot_learning_curve(experiment_folder, save_path):
     plt.title('model loss graph')
     plt.savefig(os.path.join(save_path, 'train_validation_loss.png'))
     print('done')
+
+
+class ValidationLoss(HookBase):
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg.clone()
+        self.cfg.DATASETS.TRAIN = cfg.DATASETS.TEST
+        self._loader = iter(build_detection_train_loader(self.cfg))
+        self.best_loss = float('inf')
+        self.weights = None
+
+    def after_step(self):
+        data = next(self._loader)
+        with torch.no_grad():
+            loss_dict = self.trainer.model(data)
+
+            losses = sum(loss_dict.values())
+            assert torch.isfinite(losses).all(), loss_dict
+
+            loss_dict_reduced = {'val_' + k: v.item() for k, v in
+                                 comm.reduce_dict(loss_dict).items()}
+            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+            if comm.is_main_process():
+                self.trainer.storage.put_scalars(total_val_loss=losses_reduced,
+                                                 **loss_dict_reduced)
+                if losses_reduced < self.best_loss:
+                    self.best_loss = losses_reduced
+                    self.weights = copy.deepcopy(self.trainer.model.state_dict())
+
+
+class CustomTrainer(DefaultTrainer):
+    @classmethod
+    def build_train_loader(cls, cfg):
+        return build_detection_train_loader(
+            cfg,
+            mapper=DatasetMapper(
+                cfg, is_train=True,
+                augmentations=[
+                    T.ResizeShortestEdge(short_edge_length=(640, 672, 704, 736, 768, 800), max_size=1333, sample_style='choice'),
+                    T.RandomFlip(),
+                    T.RandomCrop(crop_type='relative_range', crop_size=(0.8, 0.8))
+                ]
+            )
+        )

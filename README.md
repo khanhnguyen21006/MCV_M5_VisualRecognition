@@ -29,3 +29,7 @@ We organize the project according to the works of each week. The source code is 
 - Overleaf report with Experiment section updated [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).
 
 ### Week 4
+- For task a, run the inference.py script to get both qualitative and quantitative results for all pre-trained model tested. The name of models listed in the script.
+- Use train_evaluate.py for training Mask R-CNN, but first some hyper-parameters needs to be specified. The convention and some tested values for each parameters are briefly described in the script as well.
+- The presentation for the work done this week can be found [here](https://docs.google.com/presentation/d/1DOH6Z-eE_6O_lg6Wq6rwIWsGFw5Z76-EyOt02mBnK_E/edit?usp=sharing).
+- Overleaf report with extended Related Work and Experiments sections [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).

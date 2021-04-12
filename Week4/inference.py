@@ -13,11 +13,10 @@ from detectron2.evaluation import COCOEvaluator
 from detectron2.modeling import build_model
 from detectron2.checkpoint import DetectionCheckpointer
 
-from .utils import get_dataset_dicts
-from .utils import KITTIMOTS_CATEGORIES
+from utils import get_dataset_dicts, read_data
 
-MOTS_train_seqs = ['0005', '0009', '0011']
-MOTS_val_seqs = ['0002']
+
+MOTS_train_seqs = ['0002', '0005', '0009', '0011']
 KITTIMOTS_train_seqs = ['0000', '0001', '0003', '0004', '0005', '0009', '0011', '0012', '0015', '0017', '0019', '0020']
 KITTIMOTS_val_seqs = ['0002', '0006', '0007', '0008', '0010', '0013', '0014', '0016', '0018']
 
@@ -127,13 +126,16 @@ if __name__ == '__main__':
         '/home/mcv/datasets/KITTI-MOTS/training/image_02/0018/000106.png'
     ]
 
+    print(f'Loading Train/Validation datasets...')
+    training, validation = read_data(include_mots=True)
+
     # Register Data
     print('Registering Datasets...')
-    for d in ['train', 'test']:
-        DatasetCatalog.register("KITTIMOTS_" + d, lambda d=d: get_dataset_dicts(d, False))
-        MetadataCatalog.get("KITTIMOTS_" + d).set(thing_classes=list(KITTIMOTS_CATEGORIES.keys()))
-    kitti_metadata = MetadataCatalog.get("KITTIMOTS_train")
-    print(kitti_metadata)
+    for dt, d in zip([training, validation], ['train', 'test']):
+        DatasetCatalog.register("KITTIMOTS_" + d, lambda d=dt: get_dataset_dicts(dt, inference=True))
+        MetadataCatalog.get("KITTIMOTS_" + d).set(thing_classes=list(['Pedestrian', 'Car', 'Other']))
+    kittimots_metadata = MetadataCatalog.get("KITTIMOTS_train")
+    print(kittimots_metadata)
 
     thresh = 0.5
 
