@@ -33,3 +33,8 @@ We organize the project according to the works of each week. The source code is 
 - Use train_evaluate.py for training Mask R-CNN, but first some hyper-parameters needs to be specified. The convention and some tested values for each parameters are briefly described in the script as well.
 - The presentation for the work done this week can be found [here](https://docs.google.com/presentation/d/1DOH6Z-eE_6O_lg6Wq6rwIWsGFw5Z76-EyOt02mBnK_E/edit?usp=sharing).
 - Overleaf report with extended Related Work and Experiments sections [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).
+
+### Week 5
+- The presentation for the work done this week can be found [here](https://docs.google.com/presentation/d/1IbYVezydBY7m8hexNNWgMK9beGs557HxtDmSW4ZwKLo/edit?usp=sharing).
+- Overleaf report with extended Experiments sections for Week 5 [Overleaf project](https://www.overleaf.com/read/vgdjrgsjdfqw).
+- In addition, the supplementary document containing all experimental results can be found [here](https://www.overleaf.com/read/pkqfhshxzkhm).
